@@ -41,33 +41,52 @@ function formatCoordinates(latitude: number, longitude: number) {
 
 function formatCoordinateLabel(value: number, positiveLabel: string, negativeLabel: string) {
   const direction = value >= 0 ? positiveLabel : negativeLabel;
-  return `${Math.abs(value).toFixed(2)}° ${direction}`;
+  return `${Math.abs(value).toFixed(2)} deg ${direction}`;
 }
 
 function buildStatusChips(flight: FlightRecord) {
-  const chips: Array<{ label: string; tone: 'neutral' | 'warn' | 'alert' | 'good' }> = [];
+  const chips: Array<{ label: string; tone: 'neutral' | 'warn' | 'alert' | 'good'; icon: string }> = [];
 
   if (flight.inbound_status === 'On Time' || flight.inbound_status === 'Landed') {
-    chips.push({ label: 'On Time', tone: 'good' });
+    chips.push({ label: 'On Time', tone: 'good', icon: 'OK' });
   }
 
   if (flight.turnaround_time_minutes >= 60) {
-    chips.push({ label: 'Tight Turnaround', tone: flight.turnaround_time_minutes >= 90 ? 'alert' : 'warn' });
+    chips.push({
+      label: 'Tight Turnaround',
+      tone: flight.turnaround_time_minutes >= 90 ? 'alert' : 'warn',
+      icon: 'TT',
+    });
   }
 
-  if (['Fog', 'Rain', 'Gusty Winds', 'Light Snow', 'Overcast', 'Blizzard', 'Heavy Snow', 'Thunderstorms'].includes(flight.weather_status)) {
+  if (
+    ['Fog', 'Rain', 'Gusty Winds', 'Light Snow', 'Overcast', 'Blizzard', 'Heavy Snow', 'Thunderstorms'].includes(
+      flight.weather_status,
+    )
+  ) {
     chips.push({
       label: 'Weather Watch',
-      tone: ['Blizzard', 'Heavy Snow', 'Thunderstorms'].includes(flight.weather_status) ? 'alert' : 'warn',
+      tone: ['Blizzard', 'Heavy Snow', 'Thunderstorms'].includes(flight.weather_status)
+        ? 'alert'
+        : 'warn',
+      icon: 'WX',
     });
   }
 
   if (['Maintenance', 'Occupied', 'Unassigned'].includes(flight.gate_status)) {
-    chips.push({ label: 'Gate Conflict', tone: flight.gate_status === 'Maintenance' ? 'alert' : 'warn' });
+    chips.push({
+      label: 'Gate Conflict',
+      tone: flight.gate_status === 'Maintenance' ? 'alert' : 'warn',
+      icon: 'GT',
+    });
   }
 
   if (['Rest Period', 'Standby', 'In Transit'].includes(flight.crew_status)) {
-    chips.push({ label: 'Crew Risk', tone: flight.crew_status === 'Rest Period' ? 'alert' : 'warn' });
+    chips.push({
+      label: 'Crew Risk',
+      tone: flight.crew_status === 'Rest Period' ? 'alert' : 'warn',
+      icon: 'CR',
+    });
   }
 
   return chips;
@@ -146,10 +165,13 @@ function App() {
 
   return (
     <div className="app-shell">
-      <header className="page-header">
+      <header className="header-bar">
         <div className="header-copy">
           <p className="eyebrow">Internal airline operations demo</p>
-          <h1>Where&apos;s My Plane?</h1>
+          <div className="header-title-row">
+            <h1>Where&apos;s My Plane?</h1>
+            <span className="header-badge">Ops Control</span>
+          </div>
           <p className="subtitle">
             Flight readiness and aircraft visibility for ops teams and leadership, built from a
             local CSV and rule-based AI assessment.
@@ -216,7 +238,7 @@ function App() {
             <section className="panel top-summary-bar">
               <div className="summary-bar-main">
                 <div className="summary-item summary-primary">
-                  <span className="summary-key">Flight number</span>
+                  <span className="summary-key">Flight</span>
                   <strong>{selectedFlight.flight_number}</strong>
                 </div>
                 <div className="summary-item">
@@ -240,13 +262,14 @@ function App() {
                   <span className="risk-dot" />
                   {assessment.operational_risk_level} risk
                 </span>
-                <span className="last-updated">Last updated {lastUpdated}</span>
+                <span className="last-updated">Updated {lastUpdated}</span>
               </div>
             </section>
 
             <section className="chips-row" aria-label="Operational status chips">
               {statusChips.map((chip) => (
                 <span key={chip.label} className={`status-chip chip-${chip.tone}`}>
+                  <span className="chip-icon">{chip.icon}</span>
                   {chip.label}
                 </span>
               ))}
@@ -256,7 +279,7 @@ function App() {
               <section className="panel panel-column details-column">
                 <div className="panel-heading">
                   <h2>Flight Details</h2>
-                  <span className="badge">Ops detail</span>
+                  <span className="badge">Station view</span>
                 </div>
 
                 <article className="detail-card">
@@ -307,7 +330,7 @@ function App() {
               <section className="panel panel-column status-column">
                 <div className="panel-heading">
                   <h2>Aircraft Status</h2>
-                  <span className="badge">Location</span>
+                  <span className="badge">Inbound tracking</span>
                 </div>
 
                 <article className="aircraft-hero">
@@ -323,9 +346,14 @@ function App() {
                   <div className="map-header">
                     <div>
                       <p className="recommendation-label">Aircraft location</p>
-                      <strong>{formatCoordinates(selectedFlight.aircraft_latitude, selectedFlight.aircraft_longitude)}</strong>
+                      <strong>
+                        {formatCoordinates(
+                          selectedFlight.aircraft_latitude,
+                          selectedFlight.aircraft_longitude,
+                        )}
+                      </strong>
                     </div>
-                    <span className="map-caption">Inbound tracking</span>
+                    <span className="map-caption">Live aircraft position</span>
                   </div>
                   <div className="route-strip">
                     <div className="route-stop">
@@ -347,6 +375,9 @@ function App() {
                     <div className="plane-marker">
                       <span>&#9992;</span>
                     </div>
+                    <div className="map-snow map-snow-1" />
+                    <div className="map-snow map-snow-2" />
+                    <div className="map-snow map-snow-3" />
                   </div>
                   <dl className="location-stats">
                     <div>
@@ -382,10 +413,14 @@ function App() {
                 <article
                   className={`recommendation-banner recommendation-${assessment.operational_risk_level.toLowerCase()}`}
                 >
-                  <p className="recommendation-label">Proactive recommendation</p>
+                  <div className="recommendation-head">
+                    <p className="recommendation-label">Proactive recommendation</p>
+                    <span className="recommendation-icon">!</span>
+                  </div>
                   <h3>{assessment.proactive_recommendation}</h3>
                   <p className="recommendation-support">
-                    Action this first for {selectedFlight.flight_number} before the next ops checkpoint.
+                    Action this first for {selectedFlight.flight_number} before the next ops
+                    checkpoint.
                   </p>
                 </article>
 
