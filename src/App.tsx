@@ -35,6 +35,11 @@ function formatTime(value: string) {
   }).format(parsed);
 }
 
+function parseOpsDate(value: string) {
+  const parsed = new Date(value.replace(' ', 'T'));
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 function formatCoordinates(latitude: number, longitude: number) {
   return `${latitude.toFixed(2)}, ${longitude.toFixed(2)}`;
 }
@@ -44,49 +49,116 @@ function formatCoordinateLabel(value: number, positiveLabel: string, negativeLab
   return `${Math.abs(value).toFixed(2)} deg ${direction}`;
 }
 
+function getInboundTrackingSteps(flight: FlightRecord) {
+  const inboundStatus = flight.inbound_status;
+  const landedStatuses = new Set(['Landed']);
+  const approachingStatuses = new Set(['Taxiing']);
+  const gateReadyStatuses = new Set(['Assigned', 'Open']);
+  const crewReadyStatuses = new Set(['Ready', 'On Duty']);
+
+  return [
+    {
+      label: 'Inbound airborne',
+      state:
+        inboundStatus === 'En Route' || inboundStatus === 'On Time' || inboundStatus === 'Delayed'
+          ? 'active'
+          : landedStatuses.has(inboundStatus) || approachingStatuses.has(inboundStatus)
+            ? 'complete'
+            : 'pending',
+    },
+    {
+      label: 'Landed',
+      state:
+        landedStatuses.has(inboundStatus) || approachingStatuses.has(inboundStatus)
+          ? 'complete'
+          : 'pending',
+    },
+    {
+      label: 'At gate',
+      state:
+        landedStatuses.has(inboundStatus) && gateReadyStatuses.has(flight.gate_status)
+          ? 'complete'
+          : flight.gate_status === 'Maintenance' || flight.gate_status === 'Unassigned'
+            ? 'blocked'
+            : approachingStatuses.has(inboundStatus) || landedStatuses.has(inboundStatus)
+              ? 'active'
+              : 'pending',
+    },
+    {
+      label: 'Boarding readiness',
+      state:
+        gateReadyStatuses.has(flight.gate_status) && crewReadyStatuses.has(flight.crew_status)
+          ? 'complete'
+          : flight.crew_status === 'Rest Period' || flight.gate_status === 'Maintenance'
+            ? 'blocked'
+            : 'active',
+    },
+  ] as const;
+}
+
 function buildStatusChips(flight: FlightRecord) {
   const chips: Array<{ label: string; tone: 'neutral' | 'warn' | 'alert' | 'good'; icon: string }> = [];
+  const scheduledDeparture = parseOpsDate(flight.scheduled_departure);
+  const estimatedReady = parseOpsDate(flight.estimated_ready_time);
+  const readyBufferMinutes =
+    scheduledDeparture && estimatedReady
+      ? Math.round((scheduledDeparture.getTime() - estimatedReady.getTime()) / 60000)
+      : null;
 
-  if (flight.inbound_status === 'On Time' || flight.inbound_status === 'Landed') {
+  if (flight.inbound_status === 'On Time') {
     chips.push({ label: 'On Time', tone: 'good', icon: 'OK' });
   }
 
-  if (flight.turnaround_time_minutes >= 60) {
+  if (flight.inbound_status === 'Landed') {
+    chips.push({ label: 'Inbound Landed', tone: 'good', icon: 'LD' });
+  }
+
+  // Threshold assumption:
+  // - <= 0 min means the aircraft is not projected ready by scheduled departure
+  // - <= 15 min means ops has very little recovery margin before departure
+  if (readyBufferMinutes !== null && readyBufferMinutes <= 15) {
     chips.push({
       label: 'Tight Turnaround',
-      tone: flight.turnaround_time_minutes >= 90 ? 'alert' : 'warn',
+      tone: readyBufferMinutes <= 0 ? 'alert' : 'warn',
       icon: 'TT',
     });
   }
 
-  if (
-    ['Fog', 'Rain', 'Gusty Winds', 'Light Snow', 'Overcast', 'Blizzard', 'Heavy Snow', 'Thunderstorms'].includes(
-      flight.weather_status,
-    )
-  ) {
+  // Threshold assumption:
+  // - Blizzard, heavy snow, and thunderstorms are treated as severe operating conditions
+  // - Fog, rain, gusty winds, light snow, and overcast stay in monitoring/watch mode
+  if (['Blizzard', 'Heavy Snow', 'Thunderstorms'].includes(flight.weather_status)) {
     chips.push({
-      label: 'Weather Watch',
-      tone: ['Blizzard', 'Heavy Snow', 'Thunderstorms'].includes(flight.weather_status)
-        ? 'alert'
-        : 'warn',
+      label: 'Severe Weather',
+      tone: 'alert',
       icon: 'WX',
     });
   }
 
-  if (['Maintenance', 'Occupied', 'Unassigned'].includes(flight.gate_status)) {
-    chips.push({
-      label: 'Gate Conflict',
-      tone: flight.gate_status === 'Maintenance' ? 'alert' : 'warn',
-      icon: 'GT',
-    });
+  if (['Fog', 'Rain', 'Gusty Winds', 'Light Snow', 'Overcast'].includes(flight.weather_status)) {
+    chips.push({ label: 'Weather Watch', tone: 'warn', icon: 'WX' });
   }
 
-  if (['Rest Period', 'Standby', 'In Transit'].includes(flight.crew_status)) {
-    chips.push({
-      label: 'Crew Risk',
-      tone: flight.crew_status === 'Rest Period' ? 'alert' : 'warn',
-      icon: 'CR',
-    });
+  // Threshold assumption:
+  // - Maintenance is an immediate blocking gate issue
+  // - Unassigned or occupied gates are cautionary constraints that still need active coordination
+  if (flight.gate_status === 'Maintenance') {
+    chips.push({ label: 'Gate Maintenance', tone: 'alert', icon: 'GT' });
+  } else if (flight.gate_status === 'Unassigned') {
+    chips.push({ label: 'Gate Pending', tone: 'warn', icon: 'GT' });
+  } else if (flight.gate_status === 'Occupied') {
+    chips.push({ label: 'Gate Occupied', tone: 'warn', icon: 'GT' });
+  }
+
+  // Threshold assumption:
+  // - Rest Period is a harder constraint because the operating crew is not yet legal/available
+  // - Standby and In Transit indicate recoverable but active crew coordination is still required
+  if (flight.crew_status === 'Rest Period') {
+    chips.push({ label: 'Crew Rest Constraint', tone: 'alert', icon: 'CR' });
+  } else if (flight.crew_status === 'Standby') {
+    chips.push({ label: 'Crew Standby', tone: 'warn', icon: 'CR' });
+  } else if (flight.crew_status === 'In Transit') {
+    chips.push({ label: 'Crew Positioning', tone: 'warn', icon: 'CR' });
   }
 
   return chips;
@@ -162,6 +234,15 @@ function App() {
   }, [flights]);
 
   const statusChips = selectedFlight ? buildStatusChips(selectedFlight) : [];
+  const trackingSteps = selectedFlight ? getInboundTrackingSteps(selectedFlight) : [];
+  const flightQueue = useMemo(
+    () =>
+      flights.map((flight) => ({
+        flight,
+        assessment: buildAssessment(flight),
+      })),
+    [flights],
+  );
 
   return (
     <div className="app-shell">
@@ -235,6 +316,30 @@ function App() {
 
         {selectedFlight && assessment && (
           <>
+            <section className="alert-banner">
+              <div className="alert-main">
+                <span className="alert-label">Ops alert</span>
+                <div className="alert-title-row">
+                  <strong>{selectedFlight.flight_number}</strong>
+                  <span
+                    className={`risk-pill risk-${assessment.operational_risk_level.toLowerCase()}`}
+                  >
+                    <span className="risk-dot" />
+                    {assessment.operational_risk_level} risk
+                  </span>
+                </div>
+                <p className="alert-recommendation">{assessment.proactive_recommendation}</p>
+              </div>
+
+              <div className="alert-side">
+                <span
+                  className={`escalation-flag escalation-${assessment.escalation_needed.toLowerCase()}`}
+                >
+                  {assessment.escalation_needed === 'Yes' ? 'Escalation required' : 'No escalation'}
+                </span>
+              </div>
+            </section>
+
             <section className="panel top-summary-bar">
               <div className="summary-bar-main">
                 <div className="summary-item summary-primary">
@@ -333,28 +438,43 @@ function App() {
                   <span className="badge">Inbound tracking</span>
                 </div>
 
-                <article className="aircraft-hero">
-                  <p className="recommendation-label">Aircraft flow</p>
-                  <h3>{assessment.aircraft_status}</h3>
-                  <p>
+                <article className="tracking-hero">
+                  <div className="tracking-primary">
+                    <div>
+                      <p className="recommendation-label">Inbound ETA</p>
+                      <h3>{formatDateTime(selectedFlight.inbound_estimated_arrival)}</h3>
+                    </div>
+                    <div>
+                      <p className="recommendation-label">Ready at station</p>
+                      <h3>{formatDateTime(selectedFlight.estimated_ready_time)}</h3>
+                    </div>
+                  </div>
+                  <p className="tracking-summary">{assessment.aircraft_status}</p>
+                  <p className="tracking-route">
                     Inbound {selectedFlight.inbound_flight_number} from {selectedFlight.inbound_origin}
                   </p>
-                  <p>Inbound ETA {formatDateTime(selectedFlight.inbound_estimated_arrival)}</p>
                 </article>
 
-                <article className="map-card">
-                  <div className="map-header">
+                <article className="tracking-panel">
+                  <div className="panel-heading panel-heading-tight">
                     <div>
-                      <p className="recommendation-label">Aircraft location</p>
-                      <strong>
-                        {formatCoordinates(
-                          selectedFlight.aircraft_latitude,
-                          selectedFlight.aircraft_longitude,
-                        )}
-                      </strong>
+                      <p className="recommendation-label">Inbound readiness</p>
+                      <h3>Aircraft movement timeline</h3>
                     </div>
-                    <span className="map-caption">Live aircraft position</span>
                   </div>
+
+                  <ol className="tracking-steps">
+                    {trackingSteps.map((step) => (
+                      <li key={step.label} className={`tracking-step step-${step.state}`}>
+                        <span className="step-dot" aria-hidden="true" />
+                        <div className="step-copy">
+                          <strong>{step.label}</strong>
+                          <span className="step-state">{step.state}</span>
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+
                   <div className="route-strip">
                     <div className="route-stop">
                       <span className="route-code">{selectedFlight.inbound_origin}</span>
@@ -369,17 +489,8 @@ function App() {
                       <span className="route-role">Departure station</span>
                     </div>
                   </div>
-                  <div className="map-surface" aria-hidden="true">
-                    <div className="map-grid" />
-                    <div className="map-ring" />
-                    <div className="plane-marker">
-                      <span>&#9992;</span>
-                    </div>
-                    <div className="map-snow map-snow-1" />
-                    <div className="map-snow map-snow-2" />
-                    <div className="map-snow map-snow-3" />
-                  </div>
-                  <dl className="location-stats">
+
+                  <dl className="location-stats support-stats">
                     <div>
                       <dt>Latitude</dt>
                       <dd>
@@ -431,20 +542,94 @@ function App() {
                 </article>
 
                 <article className="assessment-card">
+                  <p className="recommendation-label">Readiness summary</p>
+                  <p className="assessment-emphasis">{assessment.readiness_summary}</p>
+                </article>
+
+                <article className="assessment-card compact-card">
                   <h3>Escalation Needed</h3>
                   <p>{assessment.escalation_needed}</p>
                 </article>
 
-                <article className="assessment-card">
+                <article className="assessment-card compact-card">
                   <h3>Passenger Message</h3>
                   <p>{assessment.passenger_message}</p>
                 </article>
 
-                <article className="assessment-card">
+                <article className="assessment-card compact-card">
                   <h3>Turnaround Assessment</h3>
                   <p>{assessment.turnaround_assessment}</p>
                 </article>
               </section>
+            </section>
+
+            <section className="panel queue-panel">
+              <div className="panel-heading">
+                <h2>Operations Queue</h2>
+                <span className="badge">All loaded flights</span>
+              </div>
+
+              <div className="queue-table-wrap">
+                <table className="queue-table">
+                  <thead>
+                    <tr>
+                      <th>Flight number</th>
+                      <th>Route</th>
+                      <th>Inbound status</th>
+                      <th>Operational risk</th>
+                      <th>Turnaround assessment</th>
+                      <th>Proactive recommendation</th>
+                      <th>Escalation needed</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {flightQueue.map(({ flight, assessment: queueAssessment }) => {
+                      const isSelected = flight.flight_number === selectedFlight.flight_number;
+
+                      return (
+                        <tr
+                          key={flight.flight_number}
+                          className={isSelected ? 'queue-row selected-row' : 'queue-row'}
+                          onClick={() => setSelectedFlightNumber(flight.flight_number)}
+                        >
+                          <td>
+                            <button
+                              type="button"
+                              className="queue-select"
+                              onClick={() => setSelectedFlightNumber(flight.flight_number)}
+                            >
+                              {flight.flight_number}
+                            </button>
+                          </td>
+                          <td>
+                            {flight.origin} to {flight.destination}
+                          </td>
+                          <td>{flight.inbound_status}</td>
+                          <td>
+                            <span
+                              className={`risk-pill risk-${queueAssessment.operational_risk_level.toLowerCase()}`}
+                            >
+                              <span className="risk-dot" />
+                              {queueAssessment.operational_risk_level}
+                            </span>
+                          </td>
+                          <td>{queueAssessment.turnaround_assessment}</td>
+                          <td className="queue-recommendation">
+                            {queueAssessment.proactive_recommendation}
+                          </td>
+                          <td>
+                            <span
+                              className={`queue-escalation escalation-${queueAssessment.escalation_needed.toLowerCase()}`}
+                            >
+                              {queueAssessment.escalation_needed}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </section>
           </>
         )}
