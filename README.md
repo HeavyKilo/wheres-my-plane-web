@@ -1,48 +1,62 @@
 # Where's My Plane?
 
-`Where's My Plane?` is an internal airline operations demo that helps ops teams and leadership quickly understand inbound aircraft status, departure readiness, and the next recommended action for a flight.
+`Where's My Plane?` is an internal airline operations demo for reviewing inbound aircraft status, departure readiness, operational risk, and the next recommended ops action for a flight.
 
-It uses a local CSV dataset, a lightweight React + TypeScript UI, and simple rule-based assessment logic to simulate an ops console without any external API dependency.
+It uses a local CSV dataset, a lightweight React + TypeScript UI, and simple rule-based logic to simulate an operations console without any external API dependency.
 
 ## Live Demo
 
-Placeholder URL:
-
 ```text
-https://your-vercel-deployment-url.vercel.app
+https://wheres-my-plane-web.vercel.app/
 ```
 
 ## Product Summary
 
-This demo is designed to answer a simple operational question:
+This demo is designed to answer a practical ops question:
 
-`Is this aircraft on track, and what should ops do next?`
+`Is this aircraft on track, and what should the ops team do next?`
 
-The app combines flight details, inbound tracking, readiness indicators, and a rule-based AI-style recommendation into a single view that is easy to present and easy to scan.
+The app combines:
+
+- a selected-flight operations console
+- inbound tracking and readiness timing
+- a rule-based AI-style assessment
+- an operations queue across all loaded flights
+
+The result is a demo-friendly view for ops teams and leadership that is easy to scan and explain.
 
 ## Screenshots
 
 Add screenshots here before broader internal sharing.
 
-- `[Screenshot Placeholder]` Top alert banner and selected-flight dashboard
-- `[Screenshot Placeholder]` Aircraft status and readiness tracking panel
-- `[Screenshot Placeholder]` Operations queue table across all flights
+- `[Screenshot Placeholder]` Alert banner and selected-flight operations console
+- `[Screenshot Placeholder]` Aircraft status and inbound readiness tracking panel
+- `[Screenshot Placeholder]` Multi-flight operations queue table
 
 ## Feature Highlights
 
-- selected-flight operations console with alert banner and risk callout
-- inbound aircraft tracking and station readiness timeline
-- rule-based AI-style assessment with proactive recommendation
+- selected-flight alert banner with operational risk and proactive recommendation
+- Canadian-style airline ops dashboard layout with three main panels
+- inbound aircraft readiness tracker with ETA, station readiness, and timeline
+- rule-based AI-style assessment with:
+  - `aircraft_status`
+  - `turnaround_assessment`
+  - `operational_risk_level`
+  - `readiness_summary`
+  - `passenger_message`
+  - `proactive_recommendation`
+  - `escalation_needed`
 - operations queue table for all loaded flights
 - local CSV workflow with fallback sample data for demo resilience
-- no external API or backend required
+- polished loading, error, and empty states
+- no backend and no external API required
 
 ## Demo Scenarios
 
-- Review a low-risk flight and show how the dashboard supports a normal departure decision.
+- Review a lower-risk flight and show how the dashboard supports a normal departure decision.
 - Switch to a delayed or weather-impacted flight and walk through the proactive recommendation.
-- Use the operations queue table to compare multiple flights and jump into the highest-risk item.
-- Demonstrate the app’s fallback behavior if the CSV cannot be loaded.
+- Use the operations queue to compare flights and jump directly into a higher-risk item.
+- Demonstrate fallback demo mode if the CSV cannot be loaded.
 
 ## Known Limitations
 
@@ -85,6 +99,7 @@ Add screenshots here before broader internal sharing.
     `-- utils
         |-- assessment.ts
         |-- csv.ts
+        |-- demoData.ts
         `-- flights.ts
 ```
 
@@ -144,7 +159,7 @@ Notes:
 - No custom server is required.
 - No environment variables are required for the current local-only version.
 
-## Data Source
+## Data Source And Resilience
 
 The app expects:
 
@@ -154,4 +169,16 @@ wheres_my_plane_dataset.csv
 
 The CSV is parsed in `src/utils/csv.ts`, validated and converted in `src/utils/flights.ts`, and rendered through `src/App.tsx`.
 
-If the CSV fails to load, the app falls back to demo-safe sample data so the interface still renders.
+If the CSV fails to load, the app:
+
+- shows a clear load issue message
+- explains the expected file and required columns
+- falls back to demo-safe sample data from `src/utils/demoData.ts`
+
+This keeps the interface usable for demos even when the source CSV is missing or malformed.
+
+## Current Status
+
+- live on Vercel
+- builds cleanly with `npm run build`
+- ready for internal sharing and walkthroughs
