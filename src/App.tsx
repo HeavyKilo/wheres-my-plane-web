@@ -23,8 +23,49 @@ function formatDateTime(value: string) {
   }).format(parsed);
 }
 
+function formatTime(value: string) {
+  const parsed = new Date(value.replace(' ', 'T'));
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat('en-CA', {
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(parsed);
+}
+
 function formatCoordinates(latitude: number, longitude: number) {
   return `${latitude.toFixed(2)}, ${longitude.toFixed(2)}`;
+}
+
+function buildStatusChips(flight: FlightRecord) {
+  const chips: Array<{ label: string; tone: 'neutral' | 'warn' | 'alert' | 'good' }> = [];
+
+  if (flight.inbound_status === 'On Time' || flight.inbound_status === 'Landed') {
+    chips.push({ label: 'On Time', tone: 'good' });
+  }
+
+  if (flight.turnaround_time_minutes >= 60) {
+    chips.push({ label: 'Tight Turnaround', tone: flight.turnaround_time_minutes >= 90 ? 'alert' : 'warn' });
+  }
+
+  if (['Fog', 'Rain', 'Gusty Winds', 'Light Snow', 'Overcast', 'Blizzard', 'Heavy Snow', 'Thunderstorms'].includes(flight.weather_status)) {
+    chips.push({
+      label: 'Weather Watch',
+      tone: ['Blizzard', 'Heavy Snow', 'Thunderstorms'].includes(flight.weather_status) ? 'alert' : 'warn',
+    });
+  }
+
+  if (['Maintenance', 'Occupied', 'Unassigned'].includes(flight.gate_status)) {
+    chips.push({ label: 'Gate Conflict', tone: flight.gate_status === 'Maintenance' ? 'alert' : 'warn' });
+  }
+
+  if (['Rest Period', 'Standby', 'In Transit'].includes(flight.crew_status)) {
+    chips.push({ label: 'Crew Risk', tone: flight.crew_status === 'Rest Period' ? 'alert' : 'warn' });
+  }
+
+  return chips;
 }
 
 function App() {
@@ -32,6 +73,7 @@ function App() {
   const [selectedFlightNumber, setSelectedFlightNumber] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [lastUpdated, setLastUpdated] = useState('');
 
   useEffect(() => {
     async function loadFlights() {
@@ -49,6 +91,17 @@ function App() {
         const parsed = parsedCsv.map(toFlightRecord);
         setFlights(parsed);
         setSelectedFlightNumber(parsed[0]?.flight_number ?? '');
+
+        // Assumption: "last updated" reflects when the local CSV was loaded into the app,
+        // not a separate operational telemetry timestamp from the dataset.
+        setLastUpdated(
+          new Intl.DateTimeFormat('en-CA', {
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+          }).format(new Date()),
+        );
       } catch {
         setError('Unable to load local flight data.');
       } finally {
@@ -84,6 +137,8 @@ function App() {
     };
   }, [flights]);
 
+  const statusChips = selectedFlight ? buildStatusChips(selectedFlight) : [];
+
   return (
     <div className="app-shell">
       <header className="page-header">
@@ -91,8 +146,8 @@ function App() {
           <p className="eyebrow">Internal airline operations demo</p>
           <h1>Where&apos;s My Plane?</h1>
           <p className="subtitle">
-            A simple operations view for flight readiness, inbound aircraft status, and a mock
-            AI-style assessment built from local CSV signals.
+            Flight readiness and aircraft visibility for ops teams and leadership, built from a
+            local CSV and rule-based AI assessment.
           </p>
         </div>
 
@@ -120,7 +175,8 @@ function App() {
                 Select flight
               </label>
               <p className="field-help">
-                Choose a record from the local CSV to inspect aircraft readiness and next actions.
+                Choose a flight from the local dataset to review readiness, aircraft flow, and the
+                recommended ops action.
               </p>
             </div>
             <span className="badge">Rule-based AI mock</span>
@@ -152,118 +208,162 @@ function App() {
 
         {selectedFlight && assessment && (
           <>
-            <section className="panel flight-briefing">
-              <div className="panel-heading">
-                <h2>Selected Flight Briefing</h2>
+            <section className="panel top-summary-bar">
+              <div className="summary-bar-main">
+                <div className="summary-item summary-primary">
+                  <span className="summary-key">Flight number</span>
+                  <strong>{selectedFlight.flight_number}</strong>
+                </div>
+                <div className="summary-item">
+                  <span className="summary-key">Route</span>
+                  <strong>
+                    {selectedFlight.origin} to {selectedFlight.destination}
+                  </strong>
+                </div>
+                <div className="summary-item">
+                  <span className="summary-key">Scheduled departure</span>
+                  <strong>{formatDateTime(selectedFlight.scheduled_departure)}</strong>
+                </div>
+                <div className="summary-item">
+                  <span className="summary-key">Inbound status</span>
+                  <strong>{selectedFlight.inbound_status}</strong>
+                </div>
+              </div>
+
+              <div className="summary-bar-side">
                 <span className={`risk-pill risk-${assessment.operational_risk_level.toLowerCase()}`}>
                   {assessment.operational_risk_level} risk
                 </span>
-              </div>
-
-              <div className="briefing-grid">
-                <article className="briefing-hero">
-                  <p className="overview-label">Selected flight</p>
-                  <h3>{selectedFlight.flight_number}</h3>
-                  <p className="route">
-                    {selectedFlight.origin} to {selectedFlight.destination}
-                  </p>
-                </article>
-
-                <article className="briefing-metric">
-                  <p className="overview-label">Scheduled departure</p>
-                  <strong>{formatDateTime(selectedFlight.scheduled_departure)}</strong>
-                </article>
-
-                <article className="briefing-metric">
-                  <p className="overview-label">Inbound status</p>
-                  <strong>{selectedFlight.inbound_status}</strong>
-                  <span>ETA {formatDateTime(selectedFlight.inbound_estimated_arrival)}</span>
-                </article>
+                <span className="last-updated">Last updated {lastUpdated}</span>
               </div>
             </section>
 
-            <section className="dashboard-layout">
-              <section className="panel ops-panel">
+            <section className="chips-row" aria-label="Operational status chips">
+              {statusChips.map((chip) => (
+                <span key={chip.label} className={`status-chip chip-${chip.tone}`}>
+                  {chip.label}
+                </span>
+              ))}
+            </section>
+
+            <section className="product-layout">
+              <section className="panel panel-column details-column">
                 <div className="panel-heading">
-                  <h2>Operational Snapshot</h2>
-                  <span className="badge">Live from local CSV</span>
+                  <h2>Flight Details</h2>
+                  <span className="badge">Ops detail</span>
                 </div>
 
-                <div className="ops-grid">
-                  <article className="detail-card">
-                    <h3>Aircraft Location</h3>
-                    <p>Coordinates: {formatCoordinates(selectedFlight.aircraft_latitude, selectedFlight.aircraft_longitude)}</p>
-                    <p>Inbound flight: {selectedFlight.inbound_flight_number}</p>
-                    <p>Inbound origin: {selectedFlight.inbound_origin}</p>
-                  </article>
+                <article className="detail-card">
+                  <h3>Gate and Turnaround</h3>
+                  <dl className="info-list">
+                    <div>
+                      <dt>Gate status</dt>
+                      <dd>{selectedFlight.gate_status}</dd>
+                    </div>
+                    <div>
+                      <dt>Turnaround time</dt>
+                      <dd>{selectedFlight.turnaround_time_minutes} min</dd>
+                    </div>
+                    <div>
+                      <dt>Boarding start</dt>
+                      <dd>{formatTime(selectedFlight.estimated_boarding_start)}</dd>
+                    </div>
+                    <div>
+                      <dt>Estimated ready</dt>
+                      <dd>{formatTime(selectedFlight.estimated_ready_time)}</dd>
+                    </div>
+                  </dl>
+                </article>
 
-                  <article className="detail-card">
-                    <h3>Turnaround Timing</h3>
-                    <p>Turnaround time: {selectedFlight.turnaround_time_minutes} min</p>
-                    <p>Boarding start: {formatDateTime(selectedFlight.estimated_boarding_start)}</p>
-                    <p>Estimated ready: {formatDateTime(selectedFlight.estimated_ready_time)}</p>
-                  </article>
-
-                  <article className="detail-card">
-                    <h3>Weather</h3>
-                    <p>Condition: {selectedFlight.weather_status}</p>
-                    <p>Delay reason: {selectedFlight.delay_reason}</p>
-                    <p>Load factor: {formatLoadFactor(selectedFlight.passenger_load_factor)}</p>
-                  </article>
-
-                  <article className="detail-card">
-                    <h3>Gate Status</h3>
-                    <p>Gate: {selectedFlight.gate_status}</p>
-                    <p>Crew: {selectedFlight.crew_status}</p>
-                    <p>Scheduled arrival: {formatDateTime(selectedFlight.scheduled_arrival)}</p>
-                  </article>
-                </div>
+                <article className="detail-card">
+                  <h3>Weather and Crew</h3>
+                  <dl className="info-list">
+                    <div>
+                      <dt>Weather</dt>
+                      <dd>{selectedFlight.weather_status}</dd>
+                    </div>
+                    <div>
+                      <dt>Crew status</dt>
+                      <dd>{selectedFlight.crew_status}</dd>
+                    </div>
+                    <div>
+                      <dt>Delay reason</dt>
+                      <dd>{selectedFlight.delay_reason}</dd>
+                    </div>
+                    <div>
+                      <dt>Load factor</dt>
+                      <dd>{formatLoadFactor(selectedFlight.passenger_load_factor)}</dd>
+                    </div>
+                  </dl>
+                </article>
               </section>
 
-              <section className="panel assessment-panel">
+              <section className="panel panel-column status-column">
+                <div className="panel-heading">
+                  <h2>Aircraft Status</h2>
+                  <span className="badge">Location</span>
+                </div>
+
+                <article className="aircraft-hero">
+                  <p className="recommendation-label">Aircraft flow</p>
+                  <h3>{assessment.aircraft_status}</h3>
+                  <p>
+                    Inbound {selectedFlight.inbound_flight_number} from {selectedFlight.inbound_origin}
+                  </p>
+                  <p>Inbound ETA {formatDateTime(selectedFlight.inbound_estimated_arrival)}</p>
+                </article>
+
+                <article className="map-card">
+                  <div className="map-header">
+                    <div>
+                      <p className="recommendation-label">Aircraft location</p>
+                      <strong>{formatCoordinates(selectedFlight.aircraft_latitude, selectedFlight.aircraft_longitude)}</strong>
+                    </div>
+                    <span className="map-caption">Inbound tracking</span>
+                  </div>
+                  <div className="map-surface" aria-hidden="true">
+                    <div className="map-grid" />
+                    <div className="map-ring" />
+                    <div className="plane-marker">
+                      <span>&#9992;</span>
+                    </div>
+                  </div>
+                </article>
+              </section>
+
+              <section className="panel panel-column assessment-panel">
                 <div className="panel-heading">
                   <h2>AI Assessment</h2>
-                  <span className="badge">Local rules only</span>
+                  <span className="badge">Decision support</span>
                 </div>
 
                 <article
                   className={`recommendation-banner recommendation-${assessment.operational_risk_level.toLowerCase()}`}
                 >
-                  <div>
-                    <p className="recommendation-label">Primary ops recommendation</p>
-                    <h3>{assessment.proactive_recommendation}</h3>
-                  </div>
-                  <span
-                    className={`risk-pill risk-${assessment.operational_risk_level.toLowerCase()}`}
-                  >
-                    {assessment.operational_risk_level} risk
-                  </span>
+                  <p className="recommendation-label">Proactive recommendation</p>
+                  <h3>{assessment.proactive_recommendation}</h3>
                 </article>
 
                 <article className="risk-highlight">
-                  <p className="recommendation-label">Operational risk level</p>
+                  <p className="recommendation-label">Operational risk</p>
                   <strong>{assessment.operational_risk_level}</strong>
                   <p>{assessment.readiness_summary}</p>
                 </article>
 
-                <div className="assessment-grid">
-                  <article className="assessment-card">
-                    <h3>Aircraft Status</h3>
-                    <p>{assessment.aircraft_status}</p>
-                  </article>
-                  <article className="assessment-card">
-                    <h3>Turnaround Assessment</h3>
-                    <p>{assessment.turnaround_assessment}</p>
-                  </article>
-                  <article className="assessment-card">
-                    <h3>Passenger Message</h3>
-                    <p>{assessment.passenger_message}</p>
-                  </article>
-                  <article className="assessment-card">
-                    <h3>Escalation Needed</h3>
-                    <p>{assessment.escalation_needed}</p>
-                  </article>
-                </div>
+                <article className="assessment-card">
+                  <h3>Escalation Needed</h3>
+                  <p>{assessment.escalation_needed}</p>
+                </article>
+
+                <article className="assessment-card">
+                  <h3>Passenger Message</h3>
+                  <p>{assessment.passenger_message}</p>
+                </article>
+
+                <article className="assessment-card">
+                  <h3>Turnaround Assessment</h3>
+                  <p>{assessment.turnaround_assessment}</p>
+                </article>
               </section>
             </section>
           </>
