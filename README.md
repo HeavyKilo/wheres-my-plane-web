@@ -2,7 +2,7 @@
 
 `Where's My Plane?` is an internal airline operations demo for reviewing inbound aircraft status, departure readiness, operational risk, and the next recommended ops action for a flight.
 
-It uses a local CSV dataset, a lightweight React + TypeScript UI, and simple rule-based logic to simulate an operations console without any external API dependency.
+It uses a local CSV dataset, a lightweight React + TypeScript UI, and a Vercel-friendly serverless backend for live flight fetching while preserving the same rule-based ops console experience.
 
 ## Live Demo
 
@@ -48,8 +48,10 @@ Add screenshots here before broader internal sharing.
   - `escalation_needed`
 - operations queue table for all loaded flights
 - local CSV workflow with fallback sample data for demo resilience
+- serverless live-flight fetch layer with Aviationstack as the primary provider
+- optional OpenSky enrichment for live aircraft position tracking
 - polished loading, error, and empty states
-- no backend and no external API required
+- no browser-exposed third-party API keys
 
 ## Demo Scenarios
 
@@ -90,6 +92,8 @@ Add screenshots here before broader internal sharing.
 |-- tsconfig.json
 |-- vite.config.ts
 |-- wheres_my_plane_dataset.csv
+|-- api
+|   `-- live-flights.ts
 `-- src
     |-- App.tsx
     |-- main.tsx
@@ -100,7 +104,8 @@ Add screenshots here before broader internal sharing.
         |-- assessment.ts
         |-- csv.ts
         |-- demoData.ts
-        `-- flights.ts
+        |-- flights.ts
+        `-- liveFlights.ts
 ```
 
 ## Install
@@ -156,8 +161,30 @@ Recommended Vercel settings:
 Notes:
 
 - The app uses Vite asset handling for `wheres_my_plane_dataset.csv`, so the CSV is bundled into the production build and served from production asset paths correctly.
-- No custom server is required.
-- No environment variables are required for the current local-only version.
+- The app includes a serverless function at `api/live-flights.ts` for live data on Vercel.
+- Live Aviationstack credentials must be configured as server-side environment variables in Vercel.
+
+Required server-side environment variables:
+
+- `AVIATIONSTACK_API_KEY`
+- `AVIATIONSTACK_API_URL`
+  Optional. Defaults to `https://api.aviationstack.com/v1/flights`
+- `AVIATIONSTACK_LIMIT`
+  Optional. Defaults to `25`
+- `OPENSKY_USERNAME`
+  Optional. Improves access/rate limits for OpenSky position enrichment
+- `OPENSKY_PASSWORD`
+  Optional. Password paired with `OPENSKY_USERNAME`
+
+Supported live query parameters for `/api/live-flights`:
+
+- `flight_iata`
+- `airline_iata` or `airline_code`
+- `dep_iata`
+- `arr_iata`
+- `airport_iata` or `airport_code`
+- `airport_scope`
+  Optional. `departure` by default, or `arrival`
 
 ## Data Source And Resilience
 
@@ -169,6 +196,10 @@ wheres_my_plane_dataset.csv
 
 The CSV is parsed in `src/utils/csv.ts`, validated and converted in `src/utils/flights.ts`, and rendered through `src/App.tsx`.
 
+When available, live flight data is fetched server-side through `api/live-flights.ts` and normalized in `src/utils/liveFlights.ts` into the same `FlightRecord` shape used by the current UI.
+
+OpenSky is used only as a secondary source for aircraft position/state enrichment. Flight identity, status, and timing remain sourced from the primary provider.
+
 If the CSV fails to load, the app:
 
 - shows a clear load issue message
@@ -176,6 +207,12 @@ If the CSV fails to load, the app:
 - falls back to demo-safe sample data from `src/utils/demoData.ts`
 
 This keeps the interface usable for demos even when the source CSV is missing or malformed.
+
+If live data is unavailable, the app falls back automatically in this order:
+
+1. live Aviationstack endpoint
+2. local CSV dataset
+3. fallback sample demo data
 
 ## Current Status
 

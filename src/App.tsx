@@ -50,8 +50,18 @@ function formatCoordinateLabel(value: number, positiveLabel: string, negativeLab
   return `${Math.abs(value).toFixed(2)} deg ${direction}`;
 }
 
+function FieldOriginTag({
+  tone,
+  label,
+}: {
+  tone: 'live' | 'estimated' | 'simulated';
+  label: string;
+}) {
+  return <span className={`field-origin field-origin-${tone}`}>{label}</span>;
+}
+
 function getInboundTrackingSteps(flight: FlightRecord) {
-  const inboundStatus = flight.inbound_status;
+  const inboundStatus = flight.flight_status || flight.inbound_status;
   const landedStatuses = new Set(['Landed']);
   const approachingStatuses = new Set(['Taxiing']);
   const gateReadyStatuses = new Set(['Assigned', 'Open']);
@@ -106,11 +116,11 @@ function buildStatusChips(flight: FlightRecord) {
       ? Math.round((scheduledDeparture.getTime() - estimatedReady.getTime()) / 60000)
       : null;
 
-  if (flight.inbound_status === 'On Time') {
+  if (flight.flight_status === 'On Time') {
     chips.push({ label: 'On Time', tone: 'good', icon: 'OK' });
   }
 
-  if (flight.inbound_status === 'Landed') {
+  if (flight.flight_status === 'Landed') {
     chips.push({ label: 'Inbound Landed', tone: 'good', icon: 'LD' });
   }
 
@@ -165,13 +175,51 @@ function buildStatusChips(flight: FlightRecord) {
   return chips;
 }
 
+function getRequestedFlightFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('flight') ?? '';
+}
+
+function setFlightInUrl(flightNumber: string) {
+  const url = new URL(window.location.href);
+  if (flightNumber) {
+    url.searchParams.set('flight', flightNumber);
+  } else {
+    url.searchParams.delete('flight');
+  }
+
+  window.history.replaceState({}, '', url);
+}
+
+function selectInitialFlight(flights: FlightRecord[], requestedFlightNumber: string) {
+  if (!flights.length) {
+    return '';
+  }
+
+  return (
+    flights.find((flight) => flight.flight_number === requestedFlightNumber)?.flight_number ??
+    flights[0].flight_number
+  );
+}
+
+function getRiskPriority(level: 'Low' | 'Moderate' | 'High') {
+  if (level === 'High') return 0;
+  if (level === 'Moderate') return 1;
+  return 2;
+}
+
+type AppMode = 'demo' | 'live';
+type DataSource = 'csv' | 'fallback' | 'live';
+
 function App() {
   const [flights, setFlights] = useState<FlightRecord[]>([]);
   const [selectedFlightNumber, setSelectedFlightNumber] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [lastUpdated, setLastUpdated] = useState('');
-  const [dataSource, setDataSource] = useState<'csv' | 'fallback'>('csv');
+  const [dataSource, setDataSource] = useState<DataSource>('csv');
+  const [mode, setMode] = useState<AppMode>('demo');
+  const [modeMessage, setModeMessage] = useState('');
 
   function markUpdatedNow() {
     setLastUpdated(
@@ -185,7 +233,7 @@ function App() {
   }
 
   useEffect(() => {
-    async function loadFlights() {
+    async function loadDemoFlights(preferredFlightNumber = '') {
       try {
         const response = await fetch(csvUrl);
         if (!response.ok) {
@@ -209,15 +257,14 @@ function App() {
         }
 
         setFlights(parsed);
-        setSelectedFlightNumber(parsed[0]?.flight_number ?? '');
+        setSelectedFlightNumber(selectInitialFlight(parsed, preferredFlightNumber));
         setDataSource('csv');
         setError('');
-        // Assumption: "last updated" reflects when the local CSV was loaded into the app,
-        // not a separate operational telemetry timestamp from the dataset.
+        setModeMessage('Demo Mode active. Using local CSV data.');
         markUpdatedNow();
       } catch (loadError) {
         setFlights(demoFlights);
-        setSelectedFlightNumber(demoFlights[0]?.flight_number ?? '');
+        setSelectedFlightNumber(selectInitialFlight(demoFlights, preferredFlightNumber));
         setDataSource('fallback');
         setError(
           [
@@ -225,14 +272,123 @@ function App() {
             loadError instanceof Error ? loadError.message : 'Unknown load error.',
           ].join(' '),
         );
+        setModeMessage('Demo Mode active. CSV unavailable, using fallback sample data.');
         markUpdatedNow();
+      }
+    }
+
+    async function loadFlights() {
+      const requestedFlightNumber = getRequestedFlightFromUrl();
+      await loadDemoFlights(requestedFlightNumber);
+      setLoading(false);
+    }
+
+    void loadFlights();
+  }, []);
+
+  async function switchMode(nextMode: AppMode) {
+    if (nextMode === mode && flights.length > 0) {
+      return;
+    }
+
+    setLoading(true);
+    setModeMessage('');
+    const requestedFlightNumber = selectedFlightNumber || getRequestedFlightFromUrl();
+
+    async function loadDemoMode() {
+      await (async () => {
+        try {
+          const response = await fetch(csvUrl);
+          if (!response.ok) {
+            throw new Error(`Received HTTP ${response.status} while loading the dataset.`);
+          }
+
+          const text = await response.text();
+          const parsedCsv = parseCsv(text);
+          const headers = Object.keys(parsedCsv[0] ?? {});
+          const columnValidation = validateFlightCsvColumns(headers);
+
+          if (!columnValidation.isValid) {
+            throw new Error(
+              `Missing required columns: ${columnValidation.missingColumns.join(', ')}.`,
+            );
+          }
+
+          const parsed = parsedCsv.map(toFlightRecord);
+          if (parsed.length === 0) {
+            throw new Error('The dataset loaded but did not contain any flight rows.');
+          }
+
+          setFlights(parsed);
+          setSelectedFlightNumber(selectInitialFlight(parsed, requestedFlightNumber));
+          setDataSource('csv');
+          setError('');
+          setMode('demo');
+          setModeMessage('Demo Mode active. Using local CSV data.');
+          markUpdatedNow();
+        } catch (loadError) {
+          setFlights(demoFlights);
+          setSelectedFlightNumber(selectInitialFlight(demoFlights, requestedFlightNumber));
+          setDataSource('fallback');
+          setError(
+            [
+              'Unable to load local flight data from wheres_my_plane_dataset.csv.',
+              loadError instanceof Error ? loadError.message : 'Unknown load error.',
+            ].join(' '),
+          );
+          setMode('demo');
+          setModeMessage('Demo Mode active. CSV unavailable, using fallback sample data.');
+          markUpdatedNow();
+        }
+      })();
+    }
+
+    async function loadLiveMode() {
+      try {
+        const response = await fetch('/api/live-flights');
+        if (!response.ok) {
+          throw new Error(`Live data endpoint returned HTTP ${response.status}.`);
+        }
+
+        const payload = await response.json();
+        if (!payload.ok || !Array.isArray(payload.flights) || payload.flights.length === 0) {
+          throw new Error(payload.message || 'Live data endpoint did not return any flights.');
+        }
+
+        const liveFlights = payload.flights as FlightRecord[];
+        setFlights(liveFlights);
+        setSelectedFlightNumber(selectInitialFlight(liveFlights, requestedFlightNumber));
+        setDataSource('live');
+        setError('');
+        setMode('live');
+        setModeMessage('Live Mode active. Using Aviationstack-backed API data.');
+        markUpdatedNow();
+      } catch (loadError) {
+        await loadDemoMode();
+        setError(
+          [
+            'Live Mode could not be enabled.',
+            loadError instanceof Error ? loadError.message : 'Unknown live data error.',
+          ].join(' '),
+        );
+        setModeMessage('Live Mode unavailable. Reverted to Demo Mode.');
       } finally {
         setLoading(false);
       }
     }
 
-    void loadFlights();
-  }, []);
+    if (nextMode === 'live') {
+      await loadLiveMode();
+      return;
+    }
+
+    await loadDemoMode();
+    setLoading(false);
+  }
+
+  useEffect(() => {
+    setFlightInUrl(selectedFlightNumber);
+  }, [selectedFlightNumber]);
 
   const selectedFlight =
     flights.find((flight) => flight.flight_number === selectedFlightNumber) ?? flights[0];
@@ -266,7 +422,21 @@ function App() {
       flights.map((flight) => ({
         flight,
         assessment: buildAssessment(flight),
-      })),
+      })).sort((left, right) => {
+        const riskComparison =
+          getRiskPriority(left.assessment.operational_risk_level) -
+          getRiskPriority(right.assessment.operational_risk_level);
+
+        if (riskComparison !== 0) {
+          return riskComparison;
+        }
+
+        const leftDeparture = parseOpsDate(left.flight.scheduled_departure)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+        const rightDeparture =
+          parseOpsDate(right.flight.scheduled_departure)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+
+        return leftDeparture - rightDeparture;
+      }),
     [flights],
   );
 
@@ -333,8 +503,27 @@ function App() {
                 recommended ops action.
               </p>
             </div>
-            <span className="badge">Rule-based AI mock</span>
+            <span className="badge">{mode === 'live' ? 'Live Mode' : 'Demo Mode'}</span>
           </div>
+
+          <div className="mode-toggle" role="tablist" aria-label="Data mode">
+            <button
+              type="button"
+              className={mode === 'demo' ? 'mode-button active-mode' : 'mode-button'}
+              onClick={() => void switchMode('demo')}
+            >
+              Demo Mode
+            </button>
+            <button
+              type="button"
+              className={mode === 'live' ? 'mode-button active-mode' : 'mode-button'}
+              onClick={() => void switchMode('live')}
+            >
+              Live Mode
+            </button>
+          </div>
+
+          {!loading && modeMessage && <p className="mode-message">{modeMessage}</p>}
 
           <select
             id="flight-selector"
@@ -354,7 +543,15 @@ function App() {
             <span>{flights.length} flights loaded</span>
             <span>{flightCsvColumns.length} mapped CSV columns</span>
             <span>
-              Source: {dataSource === 'csv' ? 'wheres_my_plane_dataset.csv' : 'Fallback demo data'}
+              Active mode: {mode === 'live' ? 'Live Mode' : 'Demo Mode'}
+            </span>
+            <span>
+              Source:{' '}
+              {dataSource === 'live'
+                ? 'Live flights API'
+                : dataSource === 'csv'
+                  ? 'Local CSV'
+                  : 'Fallback sample data'}
             </span>
           </div>
 
@@ -371,6 +568,15 @@ function App() {
                 <code> {requiredColumnsText}</code>
               </p>
               <p>Fallback demo data is active so the app still renders for review.</p>
+            </section>
+          )}
+
+          {!loading && mode === 'demo' && dataSource === 'csv' && !error && (
+            <section className="mode-info-panel">
+              <p>
+                Demo Mode is active. The app is using local CSV data to preserve a stable demo
+                experience.
+              </p>
             </section>
           )}
         </section>
@@ -429,8 +635,8 @@ function App() {
                   <strong>{formatDateTime(selectedFlight.scheduled_departure)}</strong>
                 </div>
                 <div className="summary-item">
-                  <span className="summary-key">Inbound status</span>
-                  <strong>{selectedFlight.inbound_status}</strong>
+                  <span className="summary-key">Flight status</span>
+                  <strong>{selectedFlight.flight_status}</strong>
                 </div>
               </div>
 
@@ -461,6 +667,9 @@ function App() {
 
                 <article className="detail-card">
                   <h3>Gate and Turnaround</h3>
+                  <div className="field-origin-row">
+                    <FieldOriginTag tone="simulated" label="Simulated ops fields" />
+                  </div>
                   <dl className="info-list">
                     <div>
                       <dt>Gate status</dt>
@@ -483,6 +692,9 @@ function App() {
 
                 <article className="detail-card">
                   <h3>Weather and Crew</h3>
+                  <div className="field-origin-row">
+                    <FieldOriginTag tone="simulated" label="Simulated ops fields" />
+                  </div>
                   <dl className="info-list">
                     <div>
                       <dt>Weather</dt>
@@ -513,11 +725,17 @@ function App() {
                 <article className="tracking-hero">
                   <div className="tracking-primary">
                     <div>
-                      <p className="recommendation-label">Inbound ETA</p>
+                      <div className="labeled-heading">
+                        <p className="recommendation-label">Inbound ETA</p>
+                        <FieldOriginTag tone="estimated" label="Estimated" />
+                      </div>
                       <h3>{formatDateTime(selectedFlight.inbound_estimated_arrival)}</h3>
                     </div>
                     <div>
-                      <p className="recommendation-label">Ready at station</p>
+                      <div className="labeled-heading">
+                        <p className="recommendation-label">Ready at station</p>
+                        <FieldOriginTag tone="simulated" label="Simulated" />
+                      </div>
                       <h3>{formatDateTime(selectedFlight.estimated_ready_time)}</h3>
                     </div>
                   </div>
@@ -533,6 +751,7 @@ function App() {
                       <p className="recommendation-label">Inbound readiness</p>
                       <h3>Aircraft movement timeline</h3>
                     </div>
+                    <FieldOriginTag tone="live" label="Live flight state" />
                   </div>
 
                   <ol className="tracking-steps">
@@ -597,7 +816,10 @@ function App() {
                   className={`recommendation-banner recommendation-${assessment.operational_risk_level.toLowerCase()}`}
                 >
                   <div className="recommendation-head">
-                    <p className="recommendation-label">Proactive recommendation</p>
+                    <div className="labeled-heading">
+                      <p className="recommendation-label">Proactive recommendation</p>
+                      <FieldOriginTag tone="simulated" label="Derived" />
+                    </div>
                     <span className="recommendation-icon">!</span>
                   </div>
                   <h3>{assessment.proactive_recommendation}</h3>
@@ -608,7 +830,10 @@ function App() {
                 </article>
 
                 <article className="risk-highlight">
-                  <p className="recommendation-label">Operational risk</p>
+                  <div className="labeled-heading">
+                    <p className="recommendation-label">Operational risk</p>
+                    <FieldOriginTag tone="simulated" label="Derived" />
+                  </div>
                   <strong>{assessment.operational_risk_level}</strong>
                   <p>{assessment.readiness_summary}</p>
                 </article>
@@ -647,7 +872,7 @@ function App() {
                     <tr>
                       <th>Flight number</th>
                       <th>Route</th>
-                      <th>Inbound status</th>
+                      <th>Flight status</th>
                       <th>Operational risk</th>
                       <th>Turnaround assessment</th>
                       <th>Proactive recommendation</th>
@@ -676,7 +901,7 @@ function App() {
                           <td>
                             {flight.origin} to {flight.destination}
                           </td>
-                          <td>{flight.inbound_status}</td>
+                          <td>{flight.flight_status}</td>
                           <td>
                             <span
                               className={`risk-pill risk-${queueAssessment.operational_risk_level.toLowerCase()}`}

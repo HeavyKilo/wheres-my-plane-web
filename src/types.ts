@@ -2,6 +2,8 @@ export type FlightRecord = {
   flight_number: string;
   origin: string;
   destination: string;
+  flight_status: string;
+  aircraft_icao24?: string;
   scheduled_departure: string;
   scheduled_arrival: string;
   inbound_flight_number: string;

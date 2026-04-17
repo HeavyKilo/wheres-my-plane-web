@@ -19,6 +19,10 @@ export function toFlightRecord(entry: Record<string, string>): FlightRecord {
     flight_number: entry.flight_number,
     origin: entry.origin,
     destination: entry.destination,
+    // Assumption: the CSV dataset does not expose a separate live flight status field,
+    // so we reuse inbound_status to preserve the hybrid FlightRecord contract.
+    flight_status: entry.flight_status ?? entry.inbound_status,
+    aircraft_icao24: entry.aircraft_icao24 ?? '',
     scheduled_departure: entry.scheduled_departure,
     scheduled_arrival: entry.scheduled_arrival,
     inbound_flight_number: entry.inbound_flight_number,
