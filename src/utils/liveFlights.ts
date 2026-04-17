@@ -1,4 +1,4 @@
-import type { FlightRecord } from '../types';
+import type { FlightRecord } from '../types.js';
 
 function asArray<T>(value: T[] | undefined | null) {
   return Array.isArray(value) ? value : [];
