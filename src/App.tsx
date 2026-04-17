@@ -6,6 +6,8 @@ import { parseCsv } from './utils/csv';
 import { demoFlights } from './utils/demoData';
 import { toFlightRecord, validateFlightCsvColumns } from './utils/flights';
 
+const LIVE_MODE_DEFAULT_QUERY = 'airline_code=PD';
+
 function formatLoadFactor(value: number) {
   return `${Math.round(value * 100)}%`;
 }
@@ -345,7 +347,9 @@ function App() {
 
     async function loadLiveMode() {
       try {
-        const response = await fetch('/api/live-flights');
+        // Assumption: default Live Mode should use a concrete airline filter so the ops demo
+        // loads a focused queue instead of depending on an unfiltered live provider response.
+        const response = await fetch(`/api/live-flights?${LIVE_MODE_DEFAULT_QUERY}`);
         if (!response.ok) {
           throw new Error(`Live data endpoint returned HTTP ${response.status}.`);
         }
@@ -361,7 +365,7 @@ function App() {
         setDataSource('live');
         setError('');
         setMode('live');
-        setModeMessage('Live Mode active. Using Aviationstack-backed API data.');
+        setModeMessage('Live Mode active. Using Aviationstack-backed API data for airline PD.');
         markUpdatedNow();
       } catch (loadError) {
         await loadDemoMode();

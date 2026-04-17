@@ -1,5 +1,5 @@
-import { fetchOpenSkyPositions } from './_lib/opensky';
-import { mergeOpenSkyPositions, normalizeLiveFlightsResponse } from '../src/utils/liveFlights';
+import { fetchOpenSkyPositions } from './_lib/opensky.js';
+import { mergeOpenSkyPositions, normalizeLiveFlightsResponse } from '../src/utils/liveFlights.js';
 
 function buildProviderUrl(requestUrl: string) {
   const apiKey = process.env.AVIATIONSTACK_API_KEY;
