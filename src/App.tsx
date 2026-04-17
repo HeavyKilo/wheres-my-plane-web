@@ -39,6 +39,11 @@ function formatCoordinates(latitude: number, longitude: number) {
   return `${latitude.toFixed(2)}, ${longitude.toFixed(2)}`;
 }
 
+function formatCoordinateLabel(value: number, positiveLabel: string, negativeLabel: string) {
+  const direction = value >= 0 ? positiveLabel : negativeLabel;
+  return `${Math.abs(value).toFixed(2)}° ${direction}`;
+}
+
 function buildStatusChips(flight: FlightRecord) {
   const chips: Array<{ label: string; tone: 'neutral' | 'warn' | 'alert' | 'good' }> = [];
 
@@ -232,6 +237,7 @@ function App() {
 
               <div className="summary-bar-side">
                 <span className={`risk-pill risk-${assessment.operational_risk_level.toLowerCase()}`}>
+                  <span className="risk-dot" />
                   {assessment.operational_risk_level} risk
                 </span>
                 <span className="last-updated">Last updated {lastUpdated}</span>
@@ -321,6 +327,20 @@ function App() {
                     </div>
                     <span className="map-caption">Inbound tracking</span>
                   </div>
+                  <div className="route-strip">
+                    <div className="route-stop">
+                      <span className="route-code">{selectedFlight.inbound_origin}</span>
+                      <span className="route-role">Inbound origin</span>
+                    </div>
+                    <div className="route-path" aria-hidden="true">
+                      <span className="route-line" />
+                      <span className="route-plane">&#9992;</span>
+                    </div>
+                    <div className="route-stop route-stop-arrival">
+                      <span className="route-code">{selectedFlight.origin}</span>
+                      <span className="route-role">Departure station</span>
+                    </div>
+                  </div>
                   <div className="map-surface" aria-hidden="true">
                     <div className="map-grid" />
                     <div className="map-ring" />
@@ -328,6 +348,28 @@ function App() {
                       <span>&#9992;</span>
                     </div>
                   </div>
+                  <dl className="location-stats">
+                    <div>
+                      <dt>Latitude</dt>
+                      <dd>
+                        {formatCoordinateLabel(selectedFlight.aircraft_latitude, 'N', 'S')}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Longitude</dt>
+                      <dd>
+                        {formatCoordinateLabel(selectedFlight.aircraft_longitude, 'E', 'W')}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Inbound flight</dt>
+                      <dd>{selectedFlight.inbound_flight_number}</dd>
+                    </div>
+                    <div>
+                      <dt>Inbound ETA</dt>
+                      <dd>{formatTime(selectedFlight.inbound_estimated_arrival)}</dd>
+                    </div>
+                  </dl>
                 </article>
               </section>
 
@@ -342,6 +384,9 @@ function App() {
                 >
                   <p className="recommendation-label">Proactive recommendation</p>
                   <h3>{assessment.proactive_recommendation}</h3>
+                  <p className="recommendation-support">
+                    Action this first for {selectedFlight.flight_number} before the next ops checkpoint.
+                  </p>
                 </article>
 
                 <article className="risk-highlight">
