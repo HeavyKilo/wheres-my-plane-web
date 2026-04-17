@@ -3,6 +3,7 @@ import csvUrl from '../wheres_my_plane_dataset.csv?url';
 import { flightCsvColumns, type FlightRecord } from './types';
 import { buildAssessment } from './utils/assessment';
 import { parseCsv } from './utils/csv';
+import { demoFlights } from './utils/demoData';
 import { toFlightRecord, validateFlightCsvColumns } from './utils/flights';
 
 function formatLoadFactor(value: number) {
@@ -170,36 +171,61 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [lastUpdated, setLastUpdated] = useState('');
+  const [dataSource, setDataSource] = useState<'csv' | 'fallback'>('csv');
+
+  function markUpdatedNow() {
+    setLastUpdated(
+      new Intl.DateTimeFormat('en-CA', {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      }).format(new Date()),
+    );
+  }
 
   useEffect(() => {
     async function loadFlights() {
       try {
         const response = await fetch(csvUrl);
+        if (!response.ok) {
+          throw new Error(`Received HTTP ${response.status} while loading the dataset.`);
+        }
+
         const text = await response.text();
         const parsedCsv = parseCsv(text);
         const headers = Object.keys(parsedCsv[0] ?? {});
         const columnValidation = validateFlightCsvColumns(headers);
 
         if (!columnValidation.isValid) {
-          throw new Error(`Missing CSV columns: ${columnValidation.missingColumns.join(', ')}`);
+          throw new Error(
+            `Missing required columns: ${columnValidation.missingColumns.join(', ')}.`,
+          );
         }
 
         const parsed = parsedCsv.map(toFlightRecord);
+        if (parsed.length === 0) {
+          throw new Error('The dataset loaded but did not contain any flight rows.');
+        }
+
         setFlights(parsed);
         setSelectedFlightNumber(parsed[0]?.flight_number ?? '');
-
+        setDataSource('csv');
+        setError('');
         // Assumption: "last updated" reflects when the local CSV was loaded into the app,
         // not a separate operational telemetry timestamp from the dataset.
-        setLastUpdated(
-          new Intl.DateTimeFormat('en-CA', {
-            month: 'short',
-            day: 'numeric',
-            hour: 'numeric',
-            minute: '2-digit',
-          }).format(new Date()),
+        markUpdatedNow();
+      } catch (loadError) {
+        setFlights(demoFlights);
+        setSelectedFlightNumber(demoFlights[0]?.flight_number ?? '');
+        setDataSource('fallback');
+        setError(
+          [
+            'Unable to load local flight data from wheres_my_plane_dataset.csv.',
+            loadError instanceof Error ? loadError.message : 'Unknown load error.',
+          ].join(' '),
         );
-      } catch {
-        setError('Unable to load local flight data.');
+        markUpdatedNow();
       } finally {
         setLoading(false);
       }
@@ -244,6 +270,8 @@ function App() {
     [flights],
   );
 
+  const requiredColumnsText = flightCsvColumns.join(', ');
+
   return (
     <div className="app-shell">
       <header className="header-bar">
@@ -276,6 +304,24 @@ function App() {
       </header>
 
       <main className="content-grid">
+        {loading && (
+          <section className="panel loading-panel" aria-live="polite">
+            <div className="loading-copy">
+              <span className="loading-badge">Loading operations view</span>
+              <h2>Preparing flight readiness dashboard</h2>
+              <p>
+                Loading flight records, calculating risk signals, and preparing the ops queue.
+              </p>
+            </div>
+            <div className="loading-grid" aria-hidden="true">
+              <div className="loading-block loading-block-wide" />
+              <div className="loading-block" />
+              <div className="loading-block" />
+              <div className="loading-block" />
+            </div>
+          </section>
+        )}
+
         <section className="panel controls-panel">
           <div className="control-row">
             <div>
@@ -307,14 +353,40 @@ function App() {
           <div className="dataset-meta">
             <span>{flights.length} flights loaded</span>
             <span>{flightCsvColumns.length} mapped CSV columns</span>
-            <span>Source: wheres_my_plane_dataset.csv</span>
+            <span>
+              Source: {dataSource === 'csv' ? 'wheres_my_plane_dataset.csv' : 'Fallback demo data'}
+            </span>
           </div>
 
-          {loading && <p className="status-message">Loading flight data...</p>}
-          {error && <p className="status-message error">{error}</p>}
+          {!loading && dataSource === 'fallback' && (
+            <section className="load-issue-panel" aria-live="polite">
+              <h3>CSV load issue</h3>
+              <p>{error}</p>
+              <p>
+                Expected file:
+                <code> wheres_my_plane_dataset.csv</code>
+              </p>
+              <p>
+                Required columns:
+                <code> {requiredColumnsText}</code>
+              </p>
+              <p>Fallback demo data is active so the app still renders for review.</p>
+            </section>
+          )}
         </section>
 
-        {selectedFlight && assessment && (
+        {!loading && !selectedFlight && (
+          <section className="panel empty-state-panel">
+            <span className="empty-state-badge">No flight selected</span>
+            <h2>No flight is available to display</h2>
+            <p>
+              The dashboard needs at least one flight record to render the ops console. Confirm the
+              expected dataset file is present or use the fallback demo data.
+            </p>
+          </section>
+        )}
+
+        {!loading && selectedFlight && assessment && (
           <>
             <section className="alert-banner">
               <div className="alert-main">
